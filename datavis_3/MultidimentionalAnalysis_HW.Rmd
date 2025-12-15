@@ -1,0 +1,653 @@
+---
+title: "Домашнее задание: Многомерный анализ данных"
+subtitle: "Метаболический синдром - применение PCA и методов кластеризации"
+author: "Пороло Виктория"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    number_sections: true
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+lang: ru
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 8, fig.height = 6, fig.align = 'center')
+```
+
+```{r load-libraries, include=FALSE}
+# Загрузка необходимых библиотек
+if (!require("dplyr")) install.packages("dplyr"); library(dplyr)
+if (!require("data.table")) install.packages("data.table"); library(data.table)
+if (!require("tidyverse")) install.packages("tidyverse"); library(tidyverse)
+if (!require("GGally")) install.packages("GGally"); library(GGally)
+if (!require("umap")) install.packages("umap"); library(umap)
+if (!require("factoextra")) install.packages("factoextra"); library(factoextra)
+if (!require("pheatmap")) install.packages("pheatmap"); library(pheatmap)
+if (!require("gridExtra")) install.packages("gridExtra"); library(gridExtra)
+
+theme_set(theme_bw())
+set.seed(42)
+```
+
+# Введение
+
+## О датасете
+
+В этом домашнем задании мы будем работать с датасетом **Metabolic
+Syndrome**, содержащим клинические и биохимические показатели пациентов.
+
+**Метаболический синдром** - это комплекс взаимосвязанных нарушений
+обмена веществ, включающий ожирение, инсулинорезистентность,
+дислипидемию и артериальную гипертензию. Этот синдром значительно
+повышает риск развития сердечно-сосудистых заболеваний и диабета 2 типа.
+
+Датасет включает следующие показатели:
+
+-   **Антропометрические данные**: возраст, окружность талии, ИМТ
+-   **Метаболические показатели**: уровень глюкозы, триглицеридов,
+    холестерина (HDL)
+-   **Биохимические маркеры**: альбумин в моче (UrAlbCr)
+-   **Социально-экономический статус**: уровень дохода (Его мы не будем
+    использовать в анализе)
+
+Цель работы - применить методы многомерного анализа (PCA) и
+кластеризации для выявления структуры данных и классификации пациентов
+по наличию метаболического синдрома.
+
+## Задачи домашнего задания
+
+1.  Провести исследовательский анализ данных (EDA)
+2.  Выполнить предобработку и масштабирование данных
+3.  Применить методы снижения размерности (PCA, UMAP)
+4.  Определить оптимальное количество главных компонент
+5.  Интерпретировать результаты PCA
+6.  Применить методы кластеризации (иерархическая, K-means)
+7.  Сравнить качество кластеризации различными методами
+
+# Загрузка и подготовка данных
+
+## Загрузка датасета
+
+Зарегистрируйтесь на платформе Kaggle и скачайте датасет: [Metabolic
+Syndrome
+Dataset](https://www.kaggle.com/datasets/antimoni/metabolic-syndrome)
+
+```{r load-data}
+file <- "C:/Users/vtish/Desktop/datasets & books (Bioinformatics)/Biostat2024/Визуализация Данных в R/домашки/20.11/Metabolic Syndrome.csv"
+# Загрузка данных
+data <- fread(file) %>% 
+  select(-seqn, -Sex, -Marital, -Race, -Albuminuria, -Income)
+
+# Удаление пропущенных значений
+data <- data %>% na.omit()
+
+# Сохранение целевой переменной
+target <- data$MetabolicSyndrome %>% as.factor()
+data$MetabolicSyndrome <- NULL
+
+# Проверка размерности
+cat("Размер датасета:", nrow(data), "наблюдений,", ncol(data), "переменных\n\n")
+cat("Распределение классов:\n")
+table(target)
+```
+
+# Исследовательский анализ данных (EDA)
+
+## Визуализация взаимосвязей между переменными
+
+Для комплексного анализа взаимосвязей между всеми переменными используем
+функцию `ggpairs()`, которая строит матрицу диаграмм рассеяния,
+гистограмм и коэффициентов корреляции.
+
+```{r ggpairs-initial, fig.width=12, fig.height=12}
+# Ваш код здесь
+ggpairs(data)
+
+```
+
+### Вопрос 1: Анализ распределений
+
+**Вопрос:** Какие переменные имеют правостороннюю асимметрию (скошены
+вправо, имеют длинный хвост вправо)?
+
+**Ответ:** Переменные **UrAlbCr, Triglycerides, BloodGlucose.**
+
+# Предобработка данных
+
+## Логарифмирование переменных
+
+Для переменных с сильной правосторонней асимметрией применяем
+логарифмическое преобразование, которое помогает: - Нормализовать
+распределение - Уменьшить влияние выбросов - Стабилизировать дисперсию
+
+Применяем `log1p()` (логарифм с добавлением 1), чтобы избежать проблем с
+нулевыми значениями:
+
+```{r log-transform}
+# Логарифмируем UrAlbCr (переменную с наиболее выраженной асимметрией)
+
+data2 <- data %>%
+  mutate(
+    UrAlbCr = log1p(UrAlbCr),
+    BloodGlucose = log1p(BloodGlucose),
+    Triglycerides = log1p(Triglycerides)
+  )
+
+```
+
+## Масштабирование данных
+
+Для корректной работы методов многомерного анализа необходимо
+стандартизировать данные (масштабирование к нулевому среднему и
+единичной дисперсии).
+
+```{r scale-data}
+data_scale <- as.data.frame(scale(data2))
+head(data_scale)
+```
+
+### Вопрос 2: Идентификация аутлайеров
+
+**Вопрос:** Какие переменные имеют аутлайеры (выбросы \> 3SD или \<
+-3SD)? Отразите диапазон (range) каждой переменной в шкалированном
+датасете в виде таблицы/матрицы.
+
+```{r outliers-table}
+
+range_df <- data.frame(
+  Min = round(apply(data_scale, 2, min),2),
+  Max = round(apply(data_scale, 2, max),2)
+)
+
+range_df
+```
+
+**Ответ:**
+
+Во всех переменных кроме (Age) обнаружены выбросы в \> 3SD или/и \<
+-3SD.
+
+Выбросы \>3SD имеют переменные: WaistCirc (-2.59:4.78), BMI
+(-2.33:6.09), UrAlbCr (-1.40:5.69), UricAcid (-2.57:4.07), Triglycerides
+(-2.57:4.91), HDL (-2.62:6.44).
+
+Переменная BloodGlucose (-4.26:5.66) имеет выбросы \> 3SD и \< -3SD.
+
+## Замена аутлайеров
+
+Для уменьшения влияния экстремальных значений примените замену значений
+\>3SD на 3 и \<-3SD на -3:
+
+```{r winsorize}
+data_scale_out <- data_scale %>%
+  mutate(across(everything(), ~ pmax(pmin(., 3), -3)))
+
+```
+
+## Визуализация обработанных данных
+
+```{r ggpairs-scaled, fig.width=12, fig.height=12}
+ggpairs(data_scale_out)
+```
+
+# Метод главных компонент (PCA)
+
+## Применение PCA
+
+Метод главных компонент (PCA) - это линейное преобразование данных в
+новую систему координат, где: - Первая главная компонента объясняет
+максимальную долю вариации - Каждая последующая компонента объясняет
+максимум оставшейся вариации - Все компоненты ортогональны
+(некоррелированы) друг другу
+
+```{r pca-application}
+pca_result.ca<- prcomp(data_scale_out, scale = F)
+summary(pca_result.ca)
+```
+
+## Биплот: визуализация PCA
+
+Биплот одновременно показывает: - **Наблюдения** (пациенты) - точки,
+окрашенные по диагнозу - **Переменные** - стрелки, указывающие
+направление максимального изменения
+
+Постройте биплот используя fviz_pca_biplot(). Окрасьте точки по
+переменной target (диагноз)
+
+```{r biplot-1, fig.height=8, fig.width=12}
+target2 <- factor(target,
+                  levels = c("0", "1"),
+                  labels = c("absence of metabolic syndrome", "presence of metabolic syndrome"))
+
+fviz_pca_biplot(
+  pca_result.ca,
+  geom = "point",
+  habillage = target2,            
+  addEllipses = TRUE,
+  ellipse.level = 0.95,
+  alpha.ind = 0.4,
+  col.var = "midnightblue",
+  labelsize = 4
+) + 
+  theme_bw()
+```
+
+### Вопрос 3: Интерпретация биплота
+
+**Вопрос 3.1:** Какие две переменные вносят наибольший вклад в PC2?
+
+**Ответ:** Переменные **Age**(\~52%) и **UrAlbCr** (\~23%).
+
+```{r}
+fviz_contrib(pca_result.ca, choice = "var", axes = 2)
+```
+
+**Вопрос 3.2:** Какие три переменные вносят наибольший вклад в PC1?
+
+**Ответ:** Переменные **WaistCirc** (\~27%), **BMI**(\~21%),
+**Triglycerides** (\~13%).
+
+**Вопрос 3.3:** Опишите, как в пространстве главных компонент
+разделяются наблюдения на основе диагноза. Какие 5 переменных вносят
+наибольший вклад в разделение пациентов с метаболическим синдромом и без
+него?
+
+**Ответ:** В пространстве главных компонент пациенты с метаболическим
+синдромом смещены вправо вдоль Dim1, а пациенты без синдрома - влево,
+что отражает основное разделение групп. **Наибольший вклад в это
+разделение вносят WaistCirc, BMI, Triglycerides, UricAcid и
+BloodGlucose.**
+
+### Вопрос 4: Объясненная вариация
+
+**Вопрос 4.1:** Сколько главных компонент необходимо для объяснения 90%
+вариации исходного датасета?
+
+```{r cumsum}
+summary(pca_result.ca)
+```
+
+**Ответ:** Шесть главных компонент описывают **93%** вариации исходного
+датасета.
+
+**Вопрос 4.2:** Какой процент вариации объясняют первые 3 главные
+компоненты?
+
+**Ответ:** Первые 3 главные компоненты объясняют **67.4%**
+
+# Выбор оптимального числа компонент
+
+## Метод локтя (Scree Plot)
+
+Метод локтя помогает определить, после какой компоненты добавление новых
+компонент дает незначительный прирост объясненной вариации.
+
+```{r scree-plot, fig.width=10, fig.height=6}
+
+
+var_explained <- pca_result.ca$sdev^2 / sum(pca_result.ca$sdev^2)
+
+qplot(seq_along(var_explained), var_explained) +
+  geom_line() +
+  geom_point() +
+  xlab("Principal Component") +
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0, 0.5)
+
+
+```
+
+### Вопрос 5: Метод локтя
+
+**Вопрос:** Используя метод локтя, определите оптимальное количество
+главных компонент. Какой процент вариации они объясняют?
+
+**Ответ:** По scree plot видно, что после второй главной компоненты
+вклад в объяснённую дисперсию резко уменьшается, поэтому по критерию
+«локтя» оптимально использовать **две** компоненты, они описывают
+**53%** вариации.
+
+## Метод Кайзера
+
+Метод Кайзера (Kaiser criterion) основан на собственных значениях
+(eigenvalues).
+
+```{r kaiser-method}
+eigenvalues <- pca_result.ca$sdev^2
+eigenvalues
+
+sum(eigenvalues > 1)
+```
+
+### Вопрос 6: Метод Кайзера
+
+**Вопрос:** Сколько главных компонент метод Кайзера рекомендует
+использовать для дальнейшего анализа?
+
+**Ответ:** 3 главные компоненты.
+
+**Практические рекомендации:**
+
+1.  **Цель анализа имеет значение:**
+    -   Для **кластеризации** часто достаточно 3-4 компонент,
+        объясняющих основные паттерны
+    -   Для **предсказательного моделирования** (например, линейной
+        регрессии) может потребоваться больше компонент
+    -   Для **визуализации** обычно используют 2-3 компоненты
+2.  **Сложность данных:**
+    -   В нашем датасете относительно простая структура (\~10
+        переменных)
+    -   В более сложных датасетах (\>50 переменных) может потребоваться
+        больше компонент
+3.  **Эмпирическая проверка:**
+    -   Оптимальное количество компонент можно проверить, оценивая
+        качество последующей кластеризации
+    -   В данном задании мы проверим различные варианты
+
+**Для нашего анализа:** Мы будем исследовать варианты с разным
+количеством компонент и выберем оптимальное на основе качества
+кластеризации.
+
+# Интерпретация главных компонент
+
+## Корреляции переменных с главными компонентами
+
+Для понимания биологического смысла главных компонент необходимо
+проанализировать, какие исходные переменные вносят наибольший вклад в
+каждую компоненту.
+
+Вычислите корреляции между исходными переменными и главными
+компонентами. Создайте тепловую карту используя pheatmap().
+
+```{r var-correlation, fig.width=6, fig.height=3}
+
+loadings <- pca_result.ca$rotation
+
+cor_mat <- sweep(loadings, 2, pca_result.ca$sdev, "*")
+
+
+pheatmap(
+  cor_mat,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  main = "Correlations between variables and PCs"
+)
+```
+
+### Вопрос 7: Интерпретация компонент
+
+**Вопрос:** Какие две переменные наиболее сильно коррелируют с каждой из
+первых трех главных компонент (PC1, PC2, PC3)?
+
+**Ответ:**
+
+```         
+PC1:
+- Переменная 1: WaistCirc (корреляция: 0.8)
+- Переменная 2: BMI (корреляция: 0.75)
+
+PC2:
+- Переменная 1: Age (корреляция: 0.8)
+- Переменная 2: UrAlbCr (корреляция: 0.5)
+
+PC3:
+- Переменная 1: Triglycerides (корреляция: 0.5)
+- Переменная 2: UricAcid/BloodGlucose (корреляция: 0.2)
+```
+
+# Кластеризация
+
+## Иерархическая кластеризация
+
+Примените иерархическую кластеризацию, постройте матрицу сопряженности и
+оцените совпадение предсказанных классов и диагноза с помощью
+Хи-квадрата.
+
+```{r hierarchical-optimization}
+
+
+numPCs_list <- 1:6
+distMethods <- c('euclidean', 'manhattan')
+hclustMethods <- c('ward.D2', 'complete', 'average')
+
+results <- data.frame(
+  numPCs = integer(),
+  distMethod = character(),
+  hclustMethod = character(),
+  X_squared = numeric(),
+  p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for(numPCs in numPCs_list){
+  PCs <- pca_result.ca$x[, 1:numPCs]
+  
+  for(distMethod in distMethods){
+    dist_matrix <- dist(PCs, method = distMethod)
+    
+    for(hclustMethod in hclustMethods){
+      hc <- hclust(dist_matrix, method = hclustMethod)
+      clusters <- cutree(hc, 2)
+
+      contingency_table <- table(Кластер = clusters, Диагноз = target)
+
+      chi_test <- chisq.test(contingency_table)
+
+      results <- rbind(results, data.frame(
+        numPCs = numPCs,
+        distMethod = distMethod,
+        hclustMethod = hclustMethod,
+        X_squared = chi_test$statistic,
+        p_value = chi_test$p.value
+      ))
+    }
+  }
+}
+
+results <- results %>% arrange(desc(X_squared))
+head(results, 5) 
+```
+
+### Подбор оптимальных параметров
+
+Протестируйте различные комбинации и выберите ту которая даёт лучшую
+кластеризацию на основне Хи-квадрата: - Количество главных компонент:
+1-6 (**numPCs**) - Метрики расстояния: euclidean, manhattan
+(**distMethod**) - Методы связывания: ward.D2, complete, average
+(**hclustMethod**)
+
+### Визуализация иерархической кластеризации
+
+Создайте тепловую карту с иерархической кластеризацией. Используйте
+оптимальные параметры. Добавьте аннотацию с диагнозами.
+
+```{r heatmap-hierarchical, fig.width=10, fig.height=5}
+best_combinations <- data.frame(
+  numPCs = c(1, 1, 4, 6, 2),
+  distMethod = c("euclidean", "manhattan", "euclidean", "euclidean", "euclidean"),
+  hclustMethod = c("ward.D2", "ward.D2", "ward.D2", "ward.D2", "ward.D2")
+)
+
+
+heatmap_data <- pca_result.ca$x[, 1:6]
+rownames(heatmap_data) <- paste0("Sample_", 1:nrow(heatmap_data))
+annotation_row <- data.frame(
+  Diagnosis = factor(target, levels = c(0,1), labels = c("No Syndrome","Syndrome"))
+)
+rownames(annotation_row) <- rownames(heatmap_data)
+
+annotation_colors <- list(
+  Diagnosis = c("No Syndrome" = "#8867A1", "Syndrome" = "#F5B35E")
+)
+
+for(i in 1:nrow(best_combinations)){
+  
+  numPCs <- best_combinations$numPCs[i]
+  distMethod <- best_combinations$distMethod[i]
+  hclustMethod <- best_combinations$hclustMethod[i]
+  PCs <- pca_result.ca$x[, 1:numPCs]
+  dist_matrix <- dist(PCs, method = distMethod)
+  hc <- hclust(dist_matrix, method = hclustMethod)
+  
+
+  pheatmap(
+    heatmap_data,
+    cluster_rows = hc,
+    cluster_cols = TRUE,
+    show_rownames = FALSE,
+    annotation_row = annotation_row,
+    annotation_colors = annotation_colors,
+    scale = "row",
+    color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+    main = paste0("Heatmap: PCs=", numPCs,
+                  ", dist='", distMethod,
+                  "', method='", hclustMethod, "'")
+  )
+}
+
+```
+
+## K-means кластеризация
+
+Теперь сравним результаты с методом K-means, который использует другой
+подход к кластеризации.
+
+Протестируйте K-means с разным количеством главных компонент (1-6).
+
+```{r kmeans-optimization}
+
+numPCs_list <- 1:6
+kmeans_results <- data.frame(
+  numPCs = integer(),
+  tot_withinss = numeric(),
+  X_squared = numeric(),
+  p_value = numeric()
+)
+
+for (numPCs in numPCs_list) {
+  
+  PCs <- pca_result.ca$x[, 1:numPCs]
+  
+  km <- kmeans(PCs, centers = 2, nstart = 25)
+  
+
+  contingency_table <- table(Кластер = km$cluster, Диагноз = target)
+  
+
+  chi_test <- chisq.test(contingency_table)
+  
+  kmeans_results <- rbind(
+    kmeans_results,
+    data.frame(
+      numPCs = numPCs,
+      tot_withinss = km$tot.withinss,
+      X_squared = chi_test$statistic,
+      p_value = chi_test$p.value
+    )
+  )
+}
+
+
+kmeans_results %>% arrange(desc(X_squared))
+
+```
+
+## Вопрос 8: Оптимизация K-Means
+
+**Вопрос:** Какое минимальное количество K даёт наилучшую кластеризацию
+основываясь на Хи-квадрат?
+
+**Ответ:** 3
+
+## Вопрос 9: Сравнение методов кластеризации
+
+**Вопрос:** На основе статистики χ² (Chi-squared), какой метод и с каким
+количеством главных компонент дает наилучший результат классификации?
+
+**Ответ:** По значению χ²(Chi-squared) наилучший результат показывает
+**k-means с 3 главными компонентами**, хотя преимущество над
+иерархической кластеризацией минимально (k-means:753.0521 -
+Иерархическая: 752.5190)
+
+# Визуализация лучшей кластеризации
+
+Постройте два биплота fviz_pca_biplot() рядом:\
+1) С окраской по реальному диагнозу\
+2) С окраской по кластерам лучшего метода\
+Используйте gridExtra::grid.arrange(..., ncol = 2) для размещения
+графиков
+
+```{r diagnosis-comparison, fig.width=18, fig.height=6}
+best_km <- kmeans(pca_result.ca$x[, 1:3], centers = 2, nstart = 25)
+clusters <- factor(best_km$cluster,
+                   labels = c("Cluster 1", "Cluster 2"))
+
+## Биплот 1: окраска по реальному диагнозу
+p1 <- fviz_pca_biplot(
+  pca_result.ca,
+  geom = "point",
+  habillage = target2,
+  addEllipses = TRUE,
+  ellipse.level = 0.95,
+  alpha.ind = 0.4,
+  col.var = "midnightblue",
+  title = "PCA: Real Diagnosis"
+) + theme_bw()
+
+## Биплот 2: окраска по кластерам
+p2 <- fviz_pca_biplot(
+  pca_result.ca,
+  geom = "point",
+  habillage = clusters,
+  addEllipses = TRUE,
+  ellipse.level = 0.95,
+  alpha.ind = 0.4,
+  col.var = "midnightblue",
+  title = "PCA: K-means Clusters (3 PCs)"
+) + theme_bw()
+
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+На этом заканчивается основная часть задания! Выполнив её, вы сможете
+получить 100 баллов!
+
+# Дополнительное задание: Попробуйте построить UMAP на исходном датасете
+
+```{r}
+
+umap_result <- umap(
+  data_scale,
+  n_neighbors = 15,
+  min_dist = 0.1,
+  metric = "euclidean"
+)
+
+umap_df <- as.data.frame(umap_result$layout)
+colnames(umap_df) <- c("UMAP1", "UMAP2")
+umap_df$Diagnosis <- target2
+
+ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = Diagnosis)) +
+  geom_point(alpha = 0.6, size = 2) +
+  theme_bw() +
+  labs(title = "UMAP on Original Dataset",
+       color = "Diagnosis")
+```
+
+![Well
+done](https://media.makeameme.org/created/well-done-82c060d015.jpg)
